@@ -1,6 +1,6 @@
 # Image Icons
 
-Use **any image from your vault** as the icon of a note or folder — in the file explorer and in tab headers.
+Use **any image from your vault** as the icon of any file or folder — in the file explorer and in tab headers.
 
 Icon plugins usually let you choose from icon packs or emoji. Image Icons lets you use your own pictures instead: a photo of a person in your people notes, a book cover, a project logo, a screenshot…
 
@@ -8,9 +8,14 @@ Icon plugins usually let you choose from icon packs or emoji. Image Icons lets y
 
 ### From the menu
 
-- Right-click a note in the file explorer → **Set image icon…** and pick an image (the picker shows thumbnails).
+- Right-click **any file or folder** in the file explorer → **Set image icon…** and pick an image (the picker shows thumbnails).
 - Right-click → **Remove image icon** to clear it.
-- Command palette: **Image Icons: Set image icon for current note** / **Remove image icon from current note**.
+- Command palette: **Image Icons: Set image icon for current file** / **Remove image icon from current file**.
+
+Where the image is stored:
+
+- **Notes** (and folders with a folder note) keep it in a frontmatter property — see below.
+- **Everything else** (folders without a folder note, PDFs, canvases, images, …) keeps it in the plugin's data. These icons follow the item when you rename or move it, and are cleaned up when you delete it.
 
 ### By hand (or from templates)
 
@@ -26,7 +31,7 @@ Any image format Obsidian can display works (PNG, JPG, GIF, WebP, SVG, AVIF, BMP
 
 ### Folders
 
-A folder shows the image of its **folder note** — `Folder/Folder.md` inside the folder, or `Folder.md` next to it (the conventions used by the popular folder note plugins). Right-clicking a folder that has a folder note offers **Set image icon…** as well.
+A folder shows the image of its **folder note** — `Folder/Folder.md` inside the folder, or `Folder.md` next to it (the conventions used by the popular folder note plugins). Setting an image on such a folder writes it to the folder note. Folders without a folder note can have an image too (stored in the plugin's data).
 
 ## Settings
 

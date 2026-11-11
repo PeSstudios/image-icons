@@ -18,6 +18,9 @@ const DEFAULT_SETTINGS = {
   size: 18,
   folders: true,
   tabs: true,
+  // Images for files and folders that have no frontmatter (folders without a folder note,
+  // PDFs, canvases, images…): { "path/to/item": "path/to/image.png" }
+  icons: {},
 };
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
@@ -33,6 +36,7 @@ function isImage(file) {
 module.exports = class ImageIconsPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings.icons = Object.assign({}, this.settings.icons);
     this.observers = new Map();
     this.applyBodyStyles();
     this.addSettingTab(new ImageIconsSettingTab(this.app, this));
@@ -46,8 +50,8 @@ module.exports = class ImageIconsPlugin extends Plugin {
 
     this.registerEvent(this.app.metadataCache.on('changed', () => this.requestRefresh()));
     this.registerEvent(this.app.metadataCache.on('resolved', () => this.requestRefresh()));
-    this.registerEvent(this.app.vault.on('rename', () => this.requestRefresh()));
-    this.registerEvent(this.app.vault.on('delete', () => this.requestRefresh()));
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => this.onRename(file, oldPath)));
+    this.registerEvent(this.app.vault.on('delete', (file) => this.onDelete(file)));
     this.registerEvent(this.app.workspace.on('file-open', () => this.requestRefresh()));
     this.registerEvent(
       this.app.workspace.on('layout-change', () => {
@@ -60,20 +64,20 @@ module.exports = class ImageIconsPlugin extends Plugin {
 
     this.addCommand({
       id: 'set-image-icon',
-      name: 'Set image icon for current note',
+      name: 'Set image icon for current file',
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== 'md') return false;
+        if (!file) return false;
         if (!checking) this.chooseImage(file);
         return true;
       },
     });
     this.addCommand({
       id: 'remove-image-icon',
-      name: 'Remove image icon from current note',
+      name: 'Remove image icon from current file',
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== 'md' || !this.getIconValue(file)) return false;
+        if (!file || !this.hasIcon(file)) return false;
         if (!checking) this.removeIcon(file);
         return true;
       },
@@ -93,6 +97,47 @@ module.exports = class ImageIconsPlugin extends Plugin {
     await this.saveData(this.settings);
     this.applyBodyStyles();
     this.refreshAll();
+  }
+
+  async saveIcons() {
+    await this.saveData(this.settings);
+    this.requestRefresh();
+  }
+
+  // Keep stored icons attached to their items (and images) when things are renamed or moved.
+  async onRename(file, oldPath) {
+    const icons = this.settings.icons;
+    let changed = false;
+    const prefix = oldPath + '/';
+    for (const key of Object.keys(icons)) {
+      let newKey = key;
+      if (key === oldPath) newKey = file.path;
+      else if (key.startsWith(prefix)) newKey = file.path + '/' + key.slice(prefix.length);
+      let value = icons[key];
+      if (value === oldPath) value = file.path;
+      else if (value.startsWith(prefix)) value = file.path + '/' + value.slice(prefix.length);
+      if (newKey !== key || value !== icons[key]) {
+        delete icons[key];
+        icons[newKey] = value;
+        changed = true;
+      }
+    }
+    if (changed) await this.saveIcons();
+    else this.requestRefresh();
+  }
+
+  async onDelete(file) {
+    const icons = this.settings.icons;
+    const prefix = file.path + '/';
+    let changed = false;
+    for (const key of Object.keys(icons)) {
+      if (key === file.path || key.startsWith(prefix)) {
+        delete icons[key];
+        changed = true;
+      }
+    }
+    if (changed) await this.saveIcons();
+    else this.requestRefresh();
   }
 
   applyBodyStyles() {
@@ -143,14 +188,35 @@ module.exports = class ImageIconsPlugin extends Plugin {
     return outside instanceof TFile ? outside : null;
   }
 
-  getImageSrcForPath(path) {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) return this.getImageSrcForNote(file);
-    if (file instanceof TFolder && this.settings.folders) {
-      const note = this.getFolderNote(file);
-      return note ? this.getImageSrcForNote(note) : null;
-    }
+  /** Resource URL of an image stored in the plugin data for this path, or null. */
+  getStoredImageSrc(path) {
+    const imagePath = this.settings.icons[path];
+    if (!imagePath) return null;
+    if (/^https?:\/\//i.test(imagePath)) return imagePath;
+    const image = this.app.vault.getAbstractFileByPath(imagePath);
+    return isImage(image) ? this.app.vault.getResourcePath(image) : null;
+  }
+
+  /** Where the image of a file/folder is (or would be) kept: its own note or folder note, else the plugin data. */
+  getIconNote(file) {
+    if (file instanceof TFile && file.extension === 'md') return file;
+    if (file instanceof TFolder && this.settings.folders) return this.getFolderNote(file);
     return null;
+  }
+
+  getImageSrcForFile(file) {
+    if (!file) return null;
+    const note = this.getIconNote(file);
+    return (note && this.getImageSrcForNote(note)) || this.getStoredImageSrc(file.path);
+  }
+
+  getImageSrcForPath(path) {
+    return this.getImageSrcForFile(this.app.vault.getAbstractFileByPath(path));
+  }
+
+  hasIcon(file) {
+    const note = this.getIconNote(file);
+    return !!((note && this.getIconValue(note)) || this.settings.icons[file.path]);
   }
 
   // ---------------------------------------------------------------------------
@@ -191,7 +257,7 @@ module.exports = class ImageIconsPlugin extends Plugin {
       const iconEl = leaf.tabHeaderInnerIconEl;
       if (!iconEl) return;
       const file = this.settings.tabs && leaf.view && leaf.view.file;
-      this.setIcon(iconEl, file ? this.getImageSrcForNote(file) : null);
+      this.setIcon(iconEl, file ? this.getImageSrcForFile(file) : null);
     });
   }
 
@@ -250,31 +316,60 @@ module.exports = class ImageIconsPlugin extends Plugin {
   // Setting / removing the image
 
   addMenuItems(menu, file) {
-    let target = null;
-    if (file instanceof TFile && file.extension === 'md') target = file;
-    else if (file instanceof TFolder && this.settings.folders) target = this.getFolderNote(file);
-    if (!target) return;
+    if (!(file instanceof TFile) && !(file instanceof TFolder)) return;
+    if (file instanceof TFolder && file.isRoot()) return;
 
     menu.addItem((item) =>
       item
         .setTitle('Set image icon…')
         .setIcon('image')
         .setSection('action')
-        .onClick(() => this.chooseImage(target))
+        .onClick(() => this.chooseImage(file))
     );
-    if (this.getIconValue(target)) {
+    if (this.hasIcon(file)) {
       menu.addItem((item) =>
         item
           .setTitle('Remove image icon')
           .setIcon('image-minus')
           .setSection('action')
-          .onClick(() => this.removeIcon(target))
+          .onClick(() => this.removeIcon(file))
       );
     }
   }
 
-  chooseImage(note) {
-    new ImageSuggestModal(this.app, this, (image) => this.assignImage(note, image)).open();
+  chooseImage(file) {
+    new ImageSuggestModal(this.app, this, (image) => this.assignImage(file, image)).open();
+  }
+
+  /** Notes (and folders with a folder note) keep the image in frontmatter, everything else in plugin data. */
+  async assignImage(file, image) {
+    const note = this.getIconNote(file);
+    if (note) {
+      const linktext = this.app.metadataCache.fileToLinktext(image, note.path, false);
+      await this.updateFrontmatter(note, (frontmatter) => {
+        frontmatter[this.settings.property] = `[[${linktext}]]`;
+      });
+      if (this.settings.icons[file.path]) {
+        delete this.settings.icons[file.path];
+        await this.saveIcons();
+      }
+    } else {
+      this.settings.icons[file.path] = image.path;
+      await this.saveIcons();
+    }
+  }
+
+  async removeIcon(file) {
+    const note = this.getIconNote(file);
+    if (note && this.getIconValue(note)) {
+      await this.updateFrontmatter(note, (frontmatter) => {
+        delete frontmatter[this.settings.property];
+      });
+    }
+    if (this.settings.icons[file.path]) {
+      delete this.settings.icons[file.path];
+      await this.saveIcons();
+    }
   }
 
   /** Runs a frontmatter change on a note that may have been deleted or moved meanwhile. */
@@ -291,18 +386,6 @@ module.exports = class ImageIconsPlugin extends Plugin {
     }
   }
 
-  async assignImage(note, image) {
-    const linktext = this.app.metadataCache.fileToLinktext(image, note.path, false);
-    await this.updateFrontmatter(note, (frontmatter) => {
-      frontmatter[this.settings.property] = `[[${linktext}]]`;
-    });
-  }
-
-  async removeIcon(note) {
-    await this.updateFrontmatter(note, (frontmatter) => {
-      delete frontmatter[this.settings.property];
-    });
-  }
 };
 
 class ImageSuggestModal extends FuzzySuggestModal {
