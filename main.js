@@ -9,6 +9,7 @@ const {
   TFolder,
   debounce,
   normalizePath,
+  Notice,
 } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
@@ -276,15 +277,29 @@ module.exports = class ImageIconsPlugin extends Plugin {
     new ImageSuggestModal(this.app, this, (image) => this.assignImage(note, image)).open();
   }
 
+  /** Runs a frontmatter change on a note that may have been deleted or moved meanwhile. */
+  async updateFrontmatter(note, change) {
+    const current = this.app.vault.getAbstractFileByPath(note.path);
+    if (!(current instanceof TFile)) {
+      new Notice(`Image Icons: "${note.basename}" no longer exists.`);
+      return;
+    }
+    try {
+      await this.app.fileManager.processFrontMatter(current, change);
+    } catch (error) {
+      new Notice(`Image Icons: could not update "${current.basename}". ${error && error.message ? error.message : ''}`);
+    }
+  }
+
   async assignImage(note, image) {
     const linktext = this.app.metadataCache.fileToLinktext(image, note.path, false);
-    await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+    await this.updateFrontmatter(note, (frontmatter) => {
       frontmatter[this.settings.property] = `[[${linktext}]]`;
     });
   }
 
   async removeIcon(note) {
-    await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+    await this.updateFrontmatter(note, (frontmatter) => {
       delete frontmatter[this.settings.property];
     });
   }
