@@ -8,6 +8,7 @@ const {
   TFile,
   TFolder,
   debounce,
+  normalizePath,
 } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
@@ -128,7 +129,7 @@ module.exports = class ImageIconsPlugin extends Plugin {
 
     const target =
       this.app.metadataCache.getFirstLinkpathDest(linkpath, file.path) ||
-      this.app.vault.getAbstractFileByPath(linkpath);
+      this.app.vault.getAbstractFileByPath(normalizePath(linkpath));
     return isImage(target) ? this.app.vault.getResourcePath(target) : null;
   }
 

@@ -1,7 +1,7 @@
 {
   "id": "image-icons",
   "name": "Image Icons",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.5.0",
   "description": "Use any image from your vault as the icon of a note or folder in the file explorer and tab headers.",
   "author": "PeS studios",
