@@ -1,0 +1,389 @@
+'use strict';
+
+const {
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  FuzzySuggestModal,
+  TFile,
+  TFolder,
+  debounce,
+} = require('obsidian');
+
+const DEFAULT_SETTINGS = {
+  property: 'image-icon',
+  shape: 'circle',
+  size: 18,
+  folders: true,
+  tabs: true,
+};
+
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
+const ICON_CLASS = 'image-icons-icon';
+const HAS_ICON_CLASS = 'image-icons-has-icon';
+const HIDDEN_CLASS = 'image-icons-hidden';
+const TITLE_SELECTOR = '.nav-file-title[data-path], .nav-folder-title[data-path]';
+
+function isImage(file) {
+  return file instanceof TFile && IMAGE_EXTENSIONS.has(file.extension.toLowerCase());
+}
+
+module.exports = class ImageIconsPlugin extends Plugin {
+  async onload() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.observers = new Map();
+    this.applyBodyStyles();
+    this.addSettingTab(new ImageIconsSettingTab(this.app, this));
+
+    this.requestRefresh = debounce(() => this.refreshAll(), 150, true);
+
+    this.app.workspace.onLayoutReady(() => {
+      this.attachObservers();
+      this.refreshAll();
+    });
+
+    this.registerEvent(this.app.metadataCache.on('changed', () => this.requestRefresh()));
+    this.registerEvent(this.app.metadataCache.on('resolved', () => this.requestRefresh()));
+    this.registerEvent(this.app.vault.on('rename', () => this.requestRefresh()));
+    this.registerEvent(this.app.vault.on('delete', () => this.requestRefresh()));
+    this.registerEvent(this.app.workspace.on('file-open', () => this.requestRefresh()));
+    this.registerEvent(
+      this.app.workspace.on('layout-change', () => {
+        this.attachObservers();
+        this.requestRefresh();
+      })
+    );
+
+    this.registerEvent(this.app.workspace.on('file-menu', (menu, file) => this.addMenuItems(menu, file)));
+
+    this.addCommand({
+      id: 'set-image-icon',
+      name: 'Set image icon for current note',
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== 'md') return false;
+        if (!checking) this.chooseImage(file);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: 'remove-image-icon',
+      name: 'Remove image icon from current note',
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== 'md' || !this.getIconValue(file)) return false;
+        if (!checking) this.removeIcon(file);
+        return true;
+      },
+    });
+  }
+
+  onunload() {
+    this.observers.forEach((observer) => observer.disconnect());
+    this.observers.clear();
+    document.querySelectorAll('.' + ICON_CLASS).forEach((el) => el.remove());
+    document.querySelectorAll('.' + HAS_ICON_CLASS).forEach((el) => el.removeClass(HAS_ICON_CLASS));
+    document.querySelectorAll('.' + HIDDEN_CLASS).forEach((el) => el.removeClass(HIDDEN_CLASS));
+    document.body.removeClass('image-icons-circle');
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+    this.applyBodyStyles();
+    this.refreshAll();
+  }
+
+  applyBodyStyles() {
+    document.body.toggleClass('image-icons-circle', this.settings.shape === 'circle');
+    document.body.setCssProps({ '--image-icons-size': this.settings.size + 'px' });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Resolving the image for a file or folder
+
+  /** Raw frontmatter value of the icon property (string) or null. */
+  getIconValue(file) {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const frontmatter = cache && cache.frontmatter;
+    if (!frontmatter) return null;
+    let value = frontmatter[this.settings.property];
+    if (Array.isArray(value)) value = value[0];
+    if (typeof value !== 'string' || !value.trim()) return null;
+    return value.trim();
+  }
+
+  /** Resource URL of the image assigned to a markdown note, or null. */
+  getImageSrcForNote(file) {
+    if (!(file instanceof TFile) || file.extension !== 'md') return null;
+    const value = this.getIconValue(file);
+    if (!value) return null;
+    if (/^https?:\/\//i.test(value)) return value;
+
+    const key = this.settings.property;
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fmLink = cache.frontmatterLinks && cache.frontmatterLinks.find((l) => l.key === key || l.key === key + '.0');
+    let linkpath = fmLink ? fmLink.link : value.replace(/^!?\[\[/, '').replace(/\]\]$/, '').split('|')[0];
+    linkpath = linkpath.split('#')[0].trim();
+    if (!linkpath) return null;
+
+    const target =
+      this.app.metadataCache.getFirstLinkpathDest(linkpath, file.path) ||
+      this.app.vault.getAbstractFileByPath(linkpath);
+    return isImage(target) ? this.app.vault.getResourcePath(target) : null;
+  }
+
+  /** Folder note of a folder: "Folder/Folder.md" (inside) or "Folder.md" next to it (outside). */
+  getFolderNote(folder) {
+    const inside = this.app.vault.getAbstractFileByPath(`${folder.path}/${folder.name}.md`);
+    if (inside instanceof TFile) return inside;
+    const parent = folder.parent && !folder.parent.isRoot() ? folder.parent.path + '/' : '';
+    const outside = this.app.vault.getAbstractFileByPath(`${parent}${folder.name}.md`);
+    return outside instanceof TFile ? outside : null;
+  }
+
+  getImageSrcForPath(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) return this.getImageSrcForNote(file);
+    if (file instanceof TFolder && this.settings.folders) {
+      const note = this.getFolderNote(file);
+      return note ? this.getImageSrcForNote(note) : null;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering
+
+  setIcon(containerEl, src) {
+    let img = containerEl.querySelector(':scope > .' + ICON_CLASS);
+    if (!src) {
+      if (img) img.remove();
+      containerEl.removeClass(HAS_ICON_CLASS);
+      return;
+    }
+    if (!img) {
+      img = createEl('img', { cls: ICON_CLASS, attr: { draggable: 'false', loading: 'lazy', alt: '' } });
+      containerEl.insertBefore(img, containerEl.firstChild);
+    }
+    if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+    containerEl.addClass(HAS_ICON_CLASS);
+  }
+
+  refreshTitle(titleEl) {
+    const path = titleEl.getAttribute('data-path');
+    if (path == null) return;
+    const src = this.getImageSrcForPath(path);
+    // Hide icons added by other icon plugins (e.g. Iconize) when an image is shown.
+    titleEl.querySelectorAll(':scope > .iconize-icon').forEach((el) => el.toggleClass(HIDDEN_CLASS, !!src));
+    this.setIcon(titleEl, src);
+  }
+
+  refreshWithin(rootEl) {
+    if (!rootEl || !rootEl.querySelectorAll) return;
+    if (rootEl.matches && rootEl.matches(TITLE_SELECTOR)) this.refreshTitle(rootEl);
+    rootEl.querySelectorAll(TITLE_SELECTOR).forEach((el) => this.refreshTitle(el));
+  }
+
+  refreshTabs() {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const iconEl = leaf.tabHeaderInnerIconEl;
+      if (!iconEl) return;
+      const file = this.settings.tabs && leaf.view && leaf.view.file;
+      this.setIcon(iconEl, file ? this.getImageSrcForNote(file) : null);
+    });
+  }
+
+  refreshAll() {
+    this.app.workspace.getLeavesOfType('file-explorer').forEach((leaf) => this.refreshWithin(leaf.view.containerEl));
+    this.refreshTabs();
+  }
+
+  /**
+   * The file explorer renders rows lazily (scrolling, expanding folders),
+   * so new rows are picked up with a MutationObserver per explorer view.
+   */
+  attachObservers() {
+    const alive = new Set();
+    for (const leaf of this.app.workspace.getLeavesOfType('file-explorer')) {
+      const el = leaf.view.containerEl;
+      alive.add(el);
+      if (this.observers.has(el)) continue;
+
+      let pending = [];
+      const flush = debounce(
+        () => {
+          const nodes = pending;
+          pending = [];
+          nodes.forEach((node) => {
+            if (node.isConnected) this.refreshWithin(node);
+          });
+        },
+        50,
+        false
+      );
+      const observer = new MutationObserver((mutations) => {
+        let added = false;
+        for (const mutation of mutations) {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE && !node.classList.contains(ICON_CLASS)) {
+              pending.push(node);
+              added = true;
+            }
+          });
+        }
+        if (added) flush();
+      });
+      observer.observe(el, { childList: true, subtree: true });
+      this.observers.set(el, observer);
+    }
+    for (const [el, observer] of this.observers) {
+      if (!alive.has(el)) {
+        observer.disconnect();
+        this.observers.delete(el);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Setting / removing the image
+
+  addMenuItems(menu, file) {
+    let target = null;
+    if (file instanceof TFile && file.extension === 'md') target = file;
+    else if (file instanceof TFolder && this.settings.folders) target = this.getFolderNote(file);
+    if (!target) return;
+
+    menu.addItem((item) =>
+      item
+        .setTitle('Set image icon…')
+        .setIcon('image')
+        .setSection('action')
+        .onClick(() => this.chooseImage(target))
+    );
+    if (this.getIconValue(target)) {
+      menu.addItem((item) =>
+        item
+          .setTitle('Remove image icon')
+          .setIcon('image-minus')
+          .setSection('action')
+          .onClick(() => this.removeIcon(target))
+      );
+    }
+  }
+
+  chooseImage(note) {
+    new ImageSuggestModal(this.app, this, (image) => this.assignImage(note, image)).open();
+  }
+
+  async assignImage(note, image) {
+    const linktext = this.app.metadataCache.fileToLinktext(image, note.path, false);
+    await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+      frontmatter[this.settings.property] = `[[${linktext}]]`;
+    });
+  }
+
+  async removeIcon(note) {
+    await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+      delete frontmatter[this.settings.property];
+    });
+  }
+};
+
+class ImageSuggestModal extends FuzzySuggestModal {
+  constructor(app, plugin, onChoose) {
+    super(app);
+    this.plugin = plugin;
+    this.onChoose = onChoose;
+    this.setPlaceholder('Choose an image from the vault…');
+    this.modalEl.addClass('image-icons-modal');
+  }
+
+  getItems() {
+    return this.app.vault.getFiles().filter(isImage);
+  }
+
+  getItemText(file) {
+    return file.path;
+  }
+
+  renderSuggestion(match, el) {
+    el.addClass('image-icons-suggestion');
+    el.createEl('img', {
+      cls: 'image-icons-suggestion-thumb',
+      attr: { src: this.app.vault.getResourcePath(match.item), loading: 'lazy', alt: '' },
+    });
+    const textEl = el.createDiv({ cls: 'image-icons-suggestion-text' });
+    super.renderSuggestion(match, textEl);
+  }
+
+  onChooseItem(file) {
+    this.onChoose(file);
+  }
+}
+
+class ImageIconsSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    const plugin = this.plugin;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName('Property name')
+      .setDesc('Frontmatter property that holds the image, e.g. image-icon: "[[cat.png]]". Existing notes are not renamed when you change it.')
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.property)
+          .setValue(plugin.settings.property)
+          .onChange(async (value) => {
+            plugin.settings.property = value.trim() || DEFAULT_SETTINGS.property;
+            await plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl).setName('Shape').addDropdown((dropdown) =>
+      dropdown
+        .addOption('circle', 'Circle')
+        .addOption('square', 'Rounded square')
+        .setValue(plugin.settings.shape)
+        .onChange(async (value) => {
+          plugin.settings.shape = value;
+          await plugin.saveSettings();
+        })
+    );
+
+    new Setting(containerEl).setName('Size').setDesc('In pixels.').addSlider((slider) =>
+      slider
+        .setLimits(12, 32, 1)
+        .setValue(plugin.settings.size)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          plugin.settings.size = value;
+          await plugin.saveSettings();
+        })
+    );
+
+    new Setting(containerEl)
+      .setName('Folder icons from folder notes')
+      .setDesc('A folder shows the image of its folder note ("Folder/Folder.md" or "Folder.md" next to the folder).')
+      .addToggle((toggle) =>
+        toggle.setValue(plugin.settings.folders).onChange(async (value) => {
+          plugin.settings.folders = value;
+          await plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Show in tab headers')
+      .addToggle((toggle) =>
+        toggle.setValue(plugin.settings.tabs).onChange(async (value) => {
+          plugin.settings.tabs = value;
+          await plugin.saveSettings();
+        })
+      );
+  }
+}

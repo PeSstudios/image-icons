@@ -1,0 +1,50 @@
+.image-icons-icon {
+  width: var(--image-icons-size, 18px);
+  height: var(--image-icons-size, 18px);
+  min-width: var(--image-icons-size, 18px);
+  flex-shrink: 0;
+  align-self: center;
+  object-fit: cover;
+  margin-inline-end: 5px;
+  border-radius: var(--radius-s);
+}
+
+body.image-icons-circle .image-icons-icon {
+  border-radius: 50%;
+}
+
+.image-icons-hidden {
+  display: none !important;
+}
+
+/* Tab headers: replace the view icon with the image. */
+.workspace-tab-header-inner-icon.image-icons-has-icon {
+  display: flex !important;
+}
+.workspace-tab-header-inner-icon.image-icons-has-icon > svg {
+  display: none;
+}
+.workspace-tab-header-inner-icon.image-icons-has-icon > .image-icons-icon {
+  margin-inline-end: 0;
+}
+.mod-root .workspace-tab-header-inner-icon.image-icons-has-icon {
+  margin-inline-end: 6px;
+}
+
+/* Image picker */
+.image-icons-suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-3);
+}
+.image-icons-suggestion-thumb {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-s);
+}
+.image-icons-suggestion-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
