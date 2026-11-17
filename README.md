@@ -66,6 +66,12 @@ It works in reading view and live preview, uses the shape from the settings, and
 - Works on desktop and mobile.
 - Works alongside Iconize: when a file or folder has an image icon, the Iconize icon is hidden for that item; everything else keeps its Iconize icon.
 
+## Privacy and vault access
+
+- **File list:** the image picker (*Set image icon…*) lists the files in your vault (`vault.getFiles()`) so it can offer the images among them. The list is only filtered for image files and shown in the picker — it is not stored or sent anywhere.
+- **Network:** the plugin makes no network requests of its own. The only exception is an icon you set yourself to an `https://` URL — that picture is then loaded from the web, like any image in a note.
+- **Data:** settings and the icons of non-note items are saved in the plugin's `data.json` in your vault. Icons of notes are saved in the note's frontmatter.
+
 ## Installation
 
 From Obsidian: **Settings → Community plugins → Browse**, search for **Image Icons**.
