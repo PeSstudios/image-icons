@@ -55,3 +55,14 @@ body.image-icons-circle .image-icons-icon {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Callout and admonition titles: ![[picture.png|icon]] replaces the callout icon. */
+.callout-icon.image-icons-has-icon > :not(.image-icons-icon) {
+  display: none;
+}
+.callout-icon.image-icons-has-icon > .image-icons-icon {
+  width: var(--image-icons-callout-size, 22px);
+  height: var(--image-icons-callout-size, 22px);
+  min-width: var(--image-icons-callout-size, 22px);
+  margin-inline-end: 0;
+}

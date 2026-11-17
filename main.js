@@ -28,6 +28,8 @@ const ICON_CLASS = 'image-icons-icon';
 const HAS_ICON_CLASS = 'image-icons-has-icon';
 const HIDDEN_CLASS = 'image-icons-hidden';
 const TITLE_SELECTOR = '.nav-file-title[data-path], .nav-folder-title[data-path]';
+// An image embedded in a callout / admonition title as ![[picture.png|icon]] becomes its icon.
+const CALLOUT_EMBED_SELECTOR = '.callout-title .internal-embed[alt="icon" i]';
 
 function isImage(file) {
   return file instanceof TFile && IMAGE_EXTENSIONS.has(file.extension.toLowerCase());
@@ -46,6 +48,7 @@ module.exports = class ImageIconsPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       this.attachObservers();
       this.refreshAll();
+      this.watchCallouts();
     });
 
     this.registerEvent(this.app.metadataCache.on('changed', () => this.requestRefresh()));
@@ -85,6 +88,7 @@ module.exports = class ImageIconsPlugin extends Plugin {
   }
 
   onunload() {
+    if (this.calloutObserver) this.calloutObserver.disconnect();
     this.observers.forEach((observer) => observer.disconnect());
     this.observers.clear();
     document.querySelectorAll('.' + ICON_CLASS).forEach((el) => el.remove());
@@ -310,6 +314,53 @@ module.exports = class ImageIconsPlugin extends Plugin {
         this.observers.delete(el);
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Callout and admonition icons: ![[picture.png|icon]] in the title
+
+  /**
+   * Callouts and admonitions are rendered in reading view, live preview, hover previews
+   * and inside other rendered blocks, so one observer on the whole document watches
+   * for title embeds marked with `|icon`.
+   */
+  watchCallouts() {
+    document.querySelectorAll(CALLOUT_EMBED_SELECTOR).forEach((embed) => this.applyCalloutIcon(embed));
+    this.calloutObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        // Obsidian may redraw the callout icon after rendering, which drops our image.
+        const target = mutation.target;
+        if (target.classList && target.classList.contains('callout-icon') && !target.querySelector(':scope > .' + ICON_CLASS)) {
+          const embed = target.parentElement && target.parentElement.querySelector(CALLOUT_EMBED_SELECTOR);
+          if (embed) this.applyCalloutIcon(embed);
+        }
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType !== Node.ELEMENT_NODE || node.classList.contains(ICON_CLASS)) return;
+          if (node.matches(CALLOUT_EMBED_SELECTOR)) this.applyCalloutIcon(node);
+          else if (node.firstElementChild) node.querySelectorAll(CALLOUT_EMBED_SELECTOR).forEach((embed) => this.applyCalloutIcon(embed));
+        });
+      }
+    });
+    this.calloutObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  applyCalloutIcon(embed) {
+    const titleEl = embed.closest('.callout-title');
+    const iconEl = titleEl && titleEl.querySelector(':scope > .callout-icon');
+    if (!iconEl) return;
+    const src = this.getCalloutEmbedSrc(embed);
+    if (!src) return;
+    embed.addClass(HIDDEN_CLASS);
+    this.setIcon(iconEl, src);
+  }
+
+  getCalloutEmbedSrc(embed) {
+    const link = (embed.getAttribute('src') || '').split('#')[0];
+    if (/^(https?:|app:|data:)/i.test(link)) return link;
+    const file = link && this.app.metadataCache.getFirstLinkpathDest(link, this.app.workspace.getActiveFile()?.path || '');
+    if (file instanceof TFile && IMAGE_EXTENSIONS.has(file.extension.toLowerCase())) return this.app.vault.getResourcePath(file);
+    const img = embed.querySelector('img');
+    return img ? img.getAttribute('src') : null;
   }
 
   // ---------------------------------------------------------------------------

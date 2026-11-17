@@ -1,6 +1,6 @@
 # Image Icons
 
-Use **any image from your vault** as the icon of any file or folder — in the file explorer and in tab headers.
+Use **any image from your vault** as the icon of any file or folder — in the file explorer and in tab headers — and of callouts and admonitions.
 
 Icon plugins usually let you choose from icon packs or emoji. Image Icons lets you use your own pictures instead: a photo of a person in your people notes, a book cover, a project logo, a screenshot…
 
@@ -32,6 +32,26 @@ Any image format Obsidian can display works (PNG, JPG, GIF, WebP, SVG, AVIF, BMP
 ### Folders
 
 A folder shows the image of its **folder note** — `Folder/Folder.md` inside the folder, or `Folder.md` next to it (the conventions used by the popular folder note plugins). Setting an image on such a folder writes it to the folder note. Folders without a folder note can have an image too (stored in the plugin's data).
+
+### Callouts and admonitions
+
+Put an image into a callout title and mark it with `|icon` — it replaces the callout icon:
+
+```markdown
+> [!note] ![[cat.png|icon]] My cat
+> …
+```
+
+The same works in the title of an [Admonition](https://github.com/javalent/admonitions) block:
+
+````markdown
+```ad-note
+title: ![[cat.png|icon]] My cat
+…
+```
+````
+
+It works in reading view and live preview, uses the shape from the settings, and because it is a normal embed, the link is updated when you rename or move the image.
 
 ## Settings
 
