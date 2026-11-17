@@ -13,13 +13,20 @@ body.image-icons-circle .image-icons-icon {
   border-radius: 50%;
 }
 
-.image-icons-hidden {
-  display: none !important;
+/* Iconize icon of an item that has an image icon. Iconize gives .iconize-icon display: flex,
+   so these selectors are more specific. */
+.image-icons-hidden,
+.nav-file-title > .image-icons-hidden,
+.nav-folder-title > .image-icons-hidden {
+  display: none;
 }
 
-/* Tab headers: replace the view icon with the image. */
-.workspace-tab-header-inner-icon.image-icons-has-icon {
-  display: flex !important;
+/* Tab headers: replace the view icon with the image. Obsidian hides the icon of note tabs with
+   `.workspace .mod-root .workspace-tab-header[data-type="markdown"] .workspace-tab-header-inner-icon`,
+   so the second selector is more specific than that. */
+.workspace-tab-header-inner-icon.image-icons-has-icon,
+.workspace .mod-root .workspace-tab-header[data-type] .workspace-tab-header-inner-icon.image-icons-has-icon {
+  display: flex;
 }
 .workspace-tab-header-inner-icon.image-icons-has-icon > svg {
   display: none;
